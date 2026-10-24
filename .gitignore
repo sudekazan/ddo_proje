@@ -1,0 +1,7 @@
+.env
+node_modules/
+dist/
+/backend/bin/
+*.out
+.DS_Store
+coverage.*

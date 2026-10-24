@@ -18,7 +18,7 @@ CREATE FUNCTION fdi_valid(t smallint) RETURNS boolean LANGUAGE sql IMMUTABLE AS 
 $$;
 -- +goose StatementEnd
 
-CREATE TABLE users (
+CREATE TABLE "tn-dk-users" (
   id            bigserial PRIMARY KEY,
   email         text NOT NULL UNIQUE CHECK (email = lower(email) AND position('@' IN email) > 1),
   password_hash text NOT NULL,
@@ -28,20 +28,20 @@ CREATE TABLE users (
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE refresh_tokens (
+CREATE TABLE "tn-refresh_tokens" (
   id         bigserial PRIMARY KEY,
-  user_id    bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id    bigint NOT NULL REFERENCES "tn-dk-users"(id) ON DELETE CASCADE,
   token_hash bytea NOT NULL UNIQUE,
   expires_at timestamptz NOT NULL,
   revoked_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX refresh_tokens_user_idx ON refresh_tokens (user_id) WHERE revoked_at IS NULL;
+CREATE INDEX refresh_tokens_user_idx ON "tn-refresh_tokens" (user_id) WHERE revoked_at IS NULL;
 
-CREATE TABLE audit_log (
+CREATE TABLE "tn-audit_log" (
   id            bigserial PRIMARY KEY,
   at            timestamptz NOT NULL DEFAULT now(),
-  actor_user_id bigint REFERENCES users(id),
+  actor_user_id bigint REFERENCES "tn-dk-users"(id),
   action        text NOT NULL,
   entity        text NOT NULL,
   entity_id     text NOT NULL,
@@ -49,12 +49,12 @@ CREATE TABLE audit_log (
   new_value     jsonb,
   request_id    text
 );
-CREATE INDEX audit_log_entity_idx ON audit_log (entity, entity_id, id);
-CREATE TRIGGER audit_log_append_only BEFORE UPDATE OR DELETE ON audit_log
+CREATE INDEX audit_log_entity_idx ON "tn-audit_log" (entity, entity_id, id);
+CREATE TRIGGER audit_log_append_only BEFORE UPDATE OR DELETE ON "tn-audit_log"
   FOR EACH ROW EXECUTE FUNCTION forbid_mutation();
 
-CREATE TABLE idempotency_keys (
-  user_id       bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+CREATE TABLE "tn-idempotency_keys" (
+  user_id       bigint NOT NULL REFERENCES "tn-dk-users"(id) ON DELETE CASCADE,
   key           text NOT NULL CHECK (length(key) BETWEEN 1 AND 200),
   method        text NOT NULL,
   path          text NOT NULL,
@@ -66,9 +66,9 @@ CREATE TABLE idempotency_keys (
 );
 
 -- +goose Down
-DROP TABLE idempotency_keys;
-DROP TABLE audit_log;
-DROP TABLE refresh_tokens;
-DROP TABLE users;
+DROP TABLE "tn-idempotency_keys";
+DROP TABLE "tn-audit_log";
+DROP TABLE "tn-refresh_tokens";
+DROP TABLE "tn-dk-users";
 DROP FUNCTION fdi_valid(smallint);
 DROP FUNCTION forbid_mutation();

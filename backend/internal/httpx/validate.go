@@ -25,3 +25,9 @@ func (v *V) Err() error {
 	return &Error{Status: http.StatusUnprocessableEntity, Code: "VALIDATION_ERROR",
 		Message: "girdi doğrulaması başarısız", Details: v.errs}
 }
+
+// ErrField is a shortcut for a single failed field.
+func (v *V) ErrField(field, msg string) error {
+	v.Check(false, field, msg)
+	return v.Err()
+}

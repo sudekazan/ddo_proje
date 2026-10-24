@@ -137,6 +137,7 @@ CREATE TABLE "tn-waitlist" (
   patient_id     bigint NOT NULL REFERENCES "tn-patients"(id),
   treatment_code text NOT NULL REFERENCES "tn-treatment_types"(code),
   dentist_id     bigint REFERENCES "tn-staff"(id),
+  tooth          smallint CHECK (tooth IS NULL OR fdi_valid(tooth)),
   avail_window   tstzrange NOT NULL CHECK (NOT isempty(avail_window)),
   status         text NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting','booked','cancelled')),
   appointment_id bigint REFERENCES "tn-appointments"(id),

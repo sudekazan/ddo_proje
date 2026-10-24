@@ -61,3 +61,12 @@ func Int64Param(s, name string) (int64, error) {
 	}
 	return n, nil
 }
+
+// HandlerFunc lets handlers return errors that are rendered in the standard format.
+type HandlerFunc func(w http.ResponseWriter, r *http.Request) error
+
+func (f HandlerFunc) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if err := f(w, r); err != nil {
+		WriteError(w, r, err)
+	}
+}

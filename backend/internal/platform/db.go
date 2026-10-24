@@ -46,6 +46,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	db := stdlib.OpenDBFromPool(pool)
 	defer func() { _ = db.Close() }()
 	goose.SetBaseFS(migrations.FS)
+	goose.SetTableName(`"tn-goose_db_version"`)
 	goose.SetLogger(goose.NopLogger())
 	if err := goose.SetDialect("postgres"); err != nil {
 		return err

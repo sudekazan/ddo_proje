@@ -1,0 +1,143 @@
+name: dishekimim
+
+x-backend: &backend
+  build: ./backend
+  image: dishekimim-backend:local
+  environment: &backend-env
+    DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
+    JWT_SECRET: ${JWT_SECRET}
+    CLINIC_TZ: ${CLINIC_TZ:-Europe/Istanbul}
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+    SEED: ${SEED:-42}
+    SEED_ANCHOR: ${SEED_ANCHOR:-}
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Not published to the host: reachable only on the compose network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  # One-shot: applies migrations and loads the deterministic seed (skipped when already seeded).
+  seed:
+    <<: *backend
+    command: ["/app/sim", "seed"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *backend
+    container_name: ddo-ahlat-api
+    command: ["/app/api", "serve"]
+    ports:
+      - "8080:8080"
+    environment:
+      <<: *backend-env
+      HTTP_ADDR: ":8080"
+      CORS_ORIGIN: http://localhost:3000
+    depends_on:
+      db:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/app/api", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # Live data generator: bookings (including concurrent attempts), cancellations, payments.
+  simulator:
+    <<: *backend
+    command: ["/app/sim", "live"]
+    environment:
+      <<: *backend-env
+      API_URL: http://api:8080
+      SIM_INTERVAL: ${SIM_INTERVAL:-3s}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    image: dishekimim-frontend:local
+    ports:
+      - "3000:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # make verify
+  verify:
+    <<: *backend
+    profiles: ["verify"]
+    command: ["/app/verify"]
+    environment:
+      API_URL: http://api:8080
+      FRONTEND_URL: http://frontend:8080
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+
+  # make reset-demo
+  reset:
+    <<: *backend
+    profiles: ["tools"]
+    command: ["/app/sim", "reset"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # make load
+  k6:
+    image: grafana/k6:0.54.0
+    profiles: ["load"]
+    volumes:
+      - ./loadtest:/scripts:ro
+    environment:
+      API_URL: http://api:8080
+    command: ["run", "--summary-export=/tmp/summary.json", "/scripts/booking.js"]
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # make test-integration: throwaway PostgreSQL for the Go integration tests.
+  testdb:
+    image: postgres:16-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "55433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:

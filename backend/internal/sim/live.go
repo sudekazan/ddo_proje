@@ -54,7 +54,7 @@ func (s *Runner) Run(ctx context.Context) error {
 			return nil
 		case <-t.C:
 		}
-		if s.reception == nil || time.Since(s.loggedIn) > 10*time.Minute {
+		if s.reception == nil || time.Since(s.loggedIn) > time.Minute {
 			if err := s.login(ctx); err != nil {
 				s.Log.Warn("sim login failed", "error", err.Error())
 				continue

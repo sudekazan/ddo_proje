@@ -14,6 +14,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	_ "time/tzdata" // container images carry no zoneinfo
 
 	"github.com/sudekazan/ddo_proje/backend/internal/apiclient"
 	"github.com/sudekazan/ddo_proje/backend/internal/clinic"

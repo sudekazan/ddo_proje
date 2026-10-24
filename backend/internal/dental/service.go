@@ -368,7 +368,7 @@ type PlanRequest struct {
 
 func (r PlanRequest) Validate() error {
 	var v httpx.V
-	v.Check(r.Items != nil && len(r.Items) >= 1 && len(r.Items) <= 40, "items", "1-40 kalem olmalı")
+	v.Check(len(r.Items) >= 1 && len(r.Items) <= 40, "items", "1-40 kalem olmalı")
 	for i, it := range r.Items {
 		f := fmt.Sprintf("items[%d]", i)
 		v.Check(it.TreatmentCode != "", f+".treatment_code", "zorunlu")

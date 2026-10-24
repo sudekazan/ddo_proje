@@ -16,8 +16,6 @@ import (
 	"github.com/sudekazan/ddo_proje/backend/internal/scheduling"
 )
 
-type httpxError = httpx.Error
-
 func httpxFromDB(err error) error {
 	if he := httpx.FromDB(err); he != nil {
 		return he

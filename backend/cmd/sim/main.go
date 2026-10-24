@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+	_ "time/tzdata" // container images carry no zoneinfo
 
 	"github.com/sudekazan/ddo_proje/backend/internal/auth"
 	"github.com/sudekazan/ddo_proje/backend/internal/dental"

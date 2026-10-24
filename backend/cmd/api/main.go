@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata" // container images carry no zoneinfo
 
 	"github.com/sudekazan/ddo_proje/backend/internal/api"
 	"github.com/sudekazan/ddo_proje/backend/internal/platform"

@@ -201,6 +201,16 @@ func (e *Engine) BookTx(ctx context.Context, tx pgx.Tx, actorID int64, req BookR
 	}
 	if !tt.RequiresTooth {
 		req.Tooth = nil
+	} else {
+		// Reject clinically impossible bookings early (e.g. dolgu on an extracted tooth).
+		state := dental.Healthy
+		err := tx.QueryRow(ctx, `SELECT state FROM "tn-tooth_status" WHERE patient_id = $1 AND tooth = $2`, req.PatientID, *req.Tooth).Scan(&state)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return 0, auto, err
+		}
+		if _, err := dental.Apply(tt.Code, *req.Tooth, state); err != nil {
+			return 0, auto, err
+		}
 	}
 
 	// Serialise bookings per dentist.

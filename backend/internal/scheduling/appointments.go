@@ -217,8 +217,8 @@ func (e *Engine) promoteWaitlist(ctx context.Context, tx pgx.Tx, actorID int64, 
 		FROM "tn-waitlist" w JOIN "tn-treatment_types" t ON t.code = w.treatment_code
 		WHERE w.status = 'waiting'
 		  AND (w.dentist_id IS NULL OR w.dentist_id = $1)
-		  AND $2 + make_interval(mins => t.duration_min) <= $3
-		  AND w.avail_window @> tstzrange($2, $2 + make_interval(mins => t.duration_min))
+		  AND $2::timestamptz + make_interval(mins => t.duration_min) <= $3::timestamptz
+		  AND w.avail_window @> tstzrange($2::timestamptz, $2::timestamptz + make_interval(mins => t.duration_min))
 		ORDER BY w.created_at, w.id
 		LIMIT 5
 		FOR UPDATE OF w SKIP LOCKED`, freed.DentistID, freed.Start, freed.End)

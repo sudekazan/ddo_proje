@@ -228,6 +228,15 @@ func (e *Engine) BookTx(ctx context.Context, tx pgx.Tx, actorID int64, req BookR
 	} else if leave {
 		return 0, auto, httpx.Conflict("DENTIST_ON_LEAVE", "hekim bu tarihte izinli")
 	}
+	// With the dentist row locked this check is race free; the exclusion constraint stays as backstop.
+	var dentistBusy bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM "tn-appointments" WHERE dentist_id = $1
+		AND status IN ('booked','completed') AND during && tstzrange($2, $3))`, req.DentistID, req.Start, end).Scan(&dentistBusy); err != nil {
+		return 0, auto, err
+	}
+	if dentistBusy {
+		return 0, auto, httpx.Conflict("DENTIST_BUSY", "hekimin bu saatte başka bir randevusu var")
+	}
 
 	unitID, err := e.pickUnit(ctx, tx, req.UnitID, req.Start, end)
 	if err != nil {

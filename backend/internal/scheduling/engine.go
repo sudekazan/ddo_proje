@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -151,6 +152,9 @@ func (e *Engine) Book(ctx context.Context, actor auth.Principal, req BookRequest
 			(auto.assistant && platform.ConstraintViolated(err, "appt_no_assistant_overlap"))
 		if lostRace && attempt < 3 {
 			continue
+		}
+		if err != nil {
+			e.recordConflict(ctx, actor.UserID, req, err)
 		}
 		return appt, err
 	}
@@ -427,4 +431,22 @@ func notify(ctx context.Context, tx pgx.Tx, patientID int64, apptID *int64, kind
 	_, err := tx.Exec(ctx, `INSERT INTO "tn-notifications" (patient_id, appointment_id, kind, body) VALUES ($1, $2, $3, $4)`,
 		patientID, apptID, kind, body)
 	return err
+}
+
+// recordConflict keeps a trace of rejected double bookings (outside the rolled back transaction)
+// so the dashboard can show how many conflicts the engine prevented.
+func (e *Engine) recordConflict(ctx context.Context, actorID int64, req BookRequest, err error) {
+	he := httpx.FromDB(err)
+	if he == nil {
+		if !errors.As(err, &he) {
+			return
+		}
+	}
+	if he.Status != http.StatusConflict {
+		return
+	}
+	_ = pgx.BeginFunc(ctx, e.Pool, func(tx pgx.Tx) error {
+		return audit.Write(ctx, tx, audit.Entry{Actor: actorID, Action: "booking.conflict", Entity: "dentist",
+			EntityID: req.DentistID, New: map[string]any{"code": he.Code, "start": req.Start, "patient_id": req.PatientID}})
+	})
 }

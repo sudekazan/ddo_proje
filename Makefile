@@ -1,4 +1,4 @@
-.PHONY: up down logs verify reset-demo load test test-integration lint
+.PHONY: up down logs verify reset-demo load explain test test-integration lint
 
 COMPOSE := docker compose
 
@@ -25,6 +25,9 @@ reset-demo: .env ## Verileri ilk seed haline döndürür
 
 load: .env ## k6 yük testi (randevu motoru)
 	$(COMPOSE) --profile load run --rm k6
+
+explain: .env ## Kritik sorguların dizinli/dizinsiz EXPLAIN (ANALYZE) çıktısı
+	$(COMPOSE) --profile tools run --rm reset /app/explain
 
 test: ## Birim testleri (Docker gerekmez; entegrasyon testleri atlanır)
 	cd backend && go test ./...

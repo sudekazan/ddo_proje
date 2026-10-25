@@ -1,1 +1,525 @@
 openapi: 3.0.3
+info:
+  title: DişHekimim API
+  version: 1.0.0
+  description: |
+    Diş kliniği randevu, diş haritası, tedavi planı, ödeme ve sarf malzeme API'si.
+
+    * Kimlik doğrulama: `POST /api/auth/login` ile alınan **access token** `Authorization: Bearer …` başlığında gönderilir
+      (15 dk). Süresi dolunca `POST /api/auth/refresh` ile yenilenir; refresh token her kullanımda döner (rotation),
+      eski anahtarın tekrar kullanımı tüm oturumları kapatır.
+    * Her hata `{"error":{"code":"…","message":"…","details":{…}}}` biçimindedir.
+    * Durum değiştiren kritik POST'lar `Idempotency-Key` başlığını destekler: aynı anahtarla gelen tekrar istek ilk yanıtı
+      (`Idempotent-Replayed: true` başlığıyla) döndürür; farklı gövdeyle kullanılırsa `422 IDEMPOTENCY_KEY_REUSED`.
+    * Büyük listeler keyset sayfalıdır: yanıttaki `next_cursor` değeri bir sonraki isteğe `cursor` olarak verilir.
+    * Para tutarları tam sayı **kuruş**, stok miktarları **mili birim** (1/1000 g, ml veya adet) cinsindendir.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: Sistem
+  - name: Kimlik
+  - name: Hasta
+  - name: Kaynak
+  - name: Randevu
+  - name: Diş haritası
+  - name: Tedavi planı
+  - name: Faturalama
+  - name: Stok
+  - name: Rapor
+security:
+  - bearer: []
+
+paths:
+  /health:
+    get:
+      tags: [Sistem]
+      security: []
+      summary: Sağlık durumu (veritabanı dahil)
+      responses:
+        "200": { description: Sağlıklı, content: { application/json: { schema: { $ref: "#/components/schemas/Health" } } } }
+        "503": { description: Veritabanına erişilemiyor }
+  /_hz/6736:
+    get:
+      tags: [Sistem]
+      security: []
+      summary: Ek sağlık ucu
+      responses: { "200": { description: OK } }
+
+  /api/auth/login:
+    post:
+      tags: [Kimlik]
+      security: []
+      summary: Giriş
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } } } }
+      responses:
+        "200": { description: Anahtar çifti, content: { application/json: { schema: { $ref: "#/components/schemas/TokenPair" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/auth/refresh:
+    post:
+      tags: [Kimlik]
+      security: []
+      summary: Refresh token rotasyonu
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [refresh_token], properties: { refresh_token: { type: string } } } } }
+      responses:
+        "200": { description: Yeni anahtar çifti, content: { application/json: { schema: { $ref: "#/components/schemas/TokenPair" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/auth/logout:
+    post:
+      tags: [Kimlik]
+      security: []
+      summary: Refresh token iptali
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { refresh_token: { type: string } } } } }
+      responses: { "204": { description: Çıkış yapıldı } }
+  /api/me:
+    get:
+      tags: [Kimlik]
+      summary: Oturumdaki kullanıcı
+      responses: { "200": { description: Kullanıcı }, "401": { $ref: "#/components/responses/Unauthorized" } }
+
+  /api/patients:
+    get:
+      tags: [Hasta]
+      summary: Hasta listesi / arama (personel)
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: "Soyad öneki veya 11 haneli TC" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { description: Sayfa, content: { application/json: { schema: { $ref: "#/components/schemas/PatientPage" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Hasta]
+      summary: Hasta kaydı (resepsiyon)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PatientCreate" } } }
+      responses:
+        "201": { description: Oluşturuldu, content: { application/json: { schema: { $ref: "#/components/schemas/Patient" } } } }
+        "409": { description: DUPLICATE_PATIENT }
+        "422": { $ref: "#/components/responses/Validation" }
+  /api/patients/{patientID}:
+    parameters: [{ $ref: "#/components/parameters/PatientID" }]
+    get:
+      tags: [Hasta]
+      summary: Hasta (hasta yalnızca kendisini görür)
+      responses: { "200": { description: Hasta, content: { application/json: { schema: { $ref: "#/components/schemas/Patient" } } } }, "403": { $ref: "#/components/responses/Forbidden" } }
+    patch:
+      tags: [Hasta]
+      summary: İletişim / kurum güncelleme (resepsiyon)
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { phone: { type: string }, email: { type: string }, institution_id: { type: integer }, clear_institution: { type: boolean } } } } }
+      responses: { "200": { description: Güncellendi } }
+
+  /api/treatment-types:
+    get: { tags: [Kaynak], summary: Tedavi türleri (süre, seans sayısı, asgari seans aralığı), responses: { "200": { description: Liste } } }
+  /api/staff:
+    get:
+      tags: [Kaynak]
+      summary: Personel
+      parameters: [{ name: kind, in: query, schema: { type: string, enum: [dentist, assistant] } }]
+      responses: { "200": { description: Liste } }
+  /api/staff/{staffID}/leaves:
+    parameters: [{ name: staffID, in: path, required: true, schema: { type: integer } }]
+    get: { tags: [Kaynak], summary: İzinler, responses: { "200": { description: Liste } } }
+    post:
+      tags: [Kaynak]
+      summary: İzin kaydı (resepsiyon); çakışan mevcut randevular yanıtta döner
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [start, end], properties: { start: { type: string, format: date-time }, end: { type: string, format: date-time }, reason: { type: string } } } } }
+      responses: { "201": { description: Kaydedildi }, "409": { description: LEAVE_OVERLAP } }
+  /api/units:
+    get: { tags: [Kaynak], summary: Üniteler, responses: { "200": { description: Liste } } }
+    post:
+      tags: [Kaynak]
+      summary: Ünite ekle (resepsiyon)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { name: { type: string } } } } } }
+      responses: { "201": { description: Oluşturuldu } }
+  /api/units/{unitID}:
+    patch:
+      tags: [Kaynak]
+      summary: Ünite güncelle / pasifleştir (resepsiyon)
+      parameters: [{ name: unitID, in: path, required: true, schema: { type: integer } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { name: { type: string }, active: { type: boolean } } } } } }
+      responses: { "200": { description: Güncellendi } }
+  /api/institutions:
+    get: { tags: [Kaynak], summary: Anlaşmalı kurumlar ve indirim oranları, responses: { "200": { description: Liste } } }
+
+  /api/availability:
+    get:
+      tags: [Randevu]
+      summary: Boş slotlar (hekim + ünite + asistan birlikte boş, izin dışı)
+      parameters:
+        - { name: date, in: query, required: true, schema: { type: string, format: date } }
+        - { name: treatment_code, in: query, required: true, schema: { type: string } }
+        - { name: dentist_id, in: query, schema: { type: integer } }
+      responses: { "200": { description: Slotlar, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/Slot" } } } } } } } }
+  /api/appointments:
+    get:
+      tags: [Randevu]
+      summary: Randevu listesi (hasta yalnızca kendi randevuları)
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+        - { name: dentist_id, in: query, schema: { type: integer } }
+        - { name: patient_id, in: query, schema: { type: integer } }
+        - { name: status, in: query, schema: { type: string, enum: [booked, completed, cancelled, no_show] } }
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc] } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses: { "200": { description: Sayfa } }
+    post:
+      tags: [Randevu]
+      summary: Randevu oluştur (resepsiyon, hasta kendisi için)
+      description: |
+        Ünite/asistan verilmezse boş olan otomatik atanır. Süre tedavi türünden gelir. Plan kalemi verilirse
+        plan onayı, seans sırası, asgari seans aralığı (kanal 7 gün) ve bağımlılık (kanal → kuron) denetlenir.
+        Çakışmada `409` (DENTIST_BUSY, UNIT_BUSY, ASSISTANT_BUSY, PATIENT_BUSY, DENTIST_ON_LEAVE, MIN_GAP_VIOLATION, DEPENDENCY_NOT_MET …).
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/BookRequest" } } } }
+      responses:
+        "201": { description: Oluşturuldu, content: { application/json: { schema: { $ref: "#/components/schemas/Appointment" } } } }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Validation" }
+  /api/appointments/{id}:
+    get:
+      tags: [Randevu]
+      summary: Randevu
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses: { "200": { description: Randevu } }
+  /api/appointments/{id}/cancel:
+    post:
+      tags: [Randevu]
+      summary: İptal — boşalan slot bekleme listesindeki ilk uygun hastaya otomatik verilir
+      parameters: [{ $ref: "#/components/parameters/ID" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { reason: { type: string } } } } } }
+      responses: { "200": { description: "İptal edildi; `waitlist_appointment` doluysa bekleme listesinden randevu oluşturuldu" }, "409": { description: NOT_CANCELLABLE } }
+  /api/appointments/{id}/complete:
+    post:
+      tags: [Randevu]
+      summary: Tamamla (hekim/asistan) — diş durumu, FEFO stok düşümü, plan ilerlemesi ve ilerleme faturası tek transaction'da
+      parameters: [{ $ref: "#/components/parameters/ID" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { note: { type: string } } } } } }
+      responses: { "200": { description: Tamamlandı }, "409": { description: "INSUFFICIENT_STOCK, DEPENDENCY_NOT_MET, SESSION_ORDER, NOT_COMPLETABLE" }, "422": { description: INVALID_TOOTH_PROCEDURE } }
+  /api/appointments/{id}/revert:
+    post:
+      tags: [Randevu]
+      summary: Yanlış tamamlamayı geri al (hekim) — stok aynı lotlara, borç ters kayıtla iade
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string } } } } } }
+      responses: { "200": { description: Geri alındı }, "409": { description: "NOT_COMPLETED, SESSION_ORDER, LATER_TOOTH_EVENTS" } }
+  /api/waitlist:
+    get:
+      tags: [Randevu]
+      summary: Bekleme listesi
+      parameters: [{ name: status, in: query, schema: { type: string, enum: [waiting, booked, cancelled] } }]
+      responses: { "200": { description: Liste } }
+    post:
+      tags: [Randevu]
+      summary: Bekleme listesine ekle
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [patient_id, treatment_code, from, to], properties: { patient_id: { type: integer }, treatment_code: { type: string }, dentist_id: { type: integer }, tooth: { type: integer }, from: { type: string, format: date-time }, to: { type: string, format: date-time } } } } }
+      responses: { "201": { description: Eklendi } }
+  /api/waitlist/{id}/cancel:
+    post:
+      tags: [Randevu]
+      summary: Bekleme kaydını kaldır
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses: { "204": { description: Kaldırıldı } }
+
+  /api/patients/{patientID}/teeth:
+    get:
+      tags: [Diş haritası]
+      summary: Diş haritası (32 kalıcı + 20 süt dişi, FDI)
+      parameters: [{ $ref: "#/components/parameters/PatientID" }]
+      responses: { "200": { description: Harita } }
+  /api/patients/{patientID}/tooth-events:
+    get:
+      tags: [Diş haritası]
+      summary: Tüm dişlerin işlem zaman çizelgesi (keyset)
+      parameters: [{ $ref: "#/components/parameters/PatientID" }, { $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/Limit" }]
+      responses: { "200": { description: Olaylar } }
+  /api/patients/{patientID}/teeth/{tooth}/events:
+    get:
+      tags: [Diş haritası]
+      summary: Tek dişin zaman çizelgesi
+      parameters: [{ $ref: "#/components/parameters/PatientID" }, { $ref: "#/components/parameters/Tooth" }]
+      responses: { "200": { description: Olaylar }, "422": { description: INVALID_TOOTH } }
+  /api/patients/{patientID}/teeth/{tooth}/observations:
+    post:
+      tags: [Diş haritası]
+      summary: Muayene bulgusu kaydet (hekim), ör. dişin eksik olduğu
+      parameters: [{ $ref: "#/components/parameters/PatientID" }, { $ref: "#/components/parameters/Tooth" }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [state], properties: { state: { $ref: "#/components/schemas/ToothState" }, note: { type: string } } } } } }
+      responses: { "201": { description: Kaydedildi } }
+
+  /api/plans:
+    post:
+      tags: [Tedavi planı]
+      summary: Plan oluştur (hekim)
+      description: Kalemler FDI ve diş durumuna göre doğrulanır, bağımlılıklara göre sıralanır (aynı dişte kanal → kuron otomatik), döngü reddedilir; o günün fiyatı ve kurum indirimiyle fiyatlanır.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/PlanRequest" } } } }
+      responses:
+        "201": { description: Taslak plan, content: { application/json: { schema: { $ref: "#/components/schemas/Plan" } } } }
+        "422": { description: "VALIDATION_ERROR, INVALID_TOOTH_PROCEDURE, DEPENDENCY_CYCLE, INVALID_DEPENDENCY, NO_PRICE" }
+  /api/plans/{planID}:
+    get:
+      tags: [Tedavi planı]
+      summary: Plan (tüm sürümler + güncel sürüm kalemleri)
+      parameters: [{ $ref: "#/components/parameters/PlanID" }]
+      responses: { "200": { description: Plan, content: { application/json: { schema: { $ref: "#/components/schemas/Plan" } } } } }
+  /api/plans/{planID}/revisions:
+    post:
+      tags: [Tedavi planı]
+      summary: Yeni sürüm (hekim) — plan tekrar onaya düşer
+      parameters: [{ $ref: "#/components/parameters/PlanID" }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/PlanRequest" } } } }
+      responses: { "201": { description: Yeni sürüm }, "409": { description: "PLAN_NOT_REVISABLE, PLAN_HAS_SESSIONS" } }
+  /api/plans/{planID}/approve:
+    post:
+      tags: [Tedavi planı]
+      summary: Hasta onayı (hasta portalı veya resepsiyonda imzalı form)
+      parameters: [{ $ref: "#/components/parameters/PlanID" }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [version], properties: { version: { type: integer } } } } } }
+      responses: { "200": { description: Onaylandı }, "409": { description: "PLAN_VERSION_MISMATCH, PLAN_NOT_DRAFT" } }
+  /api/plans/{planID}/cancel:
+    post:
+      tags: [Tedavi planı]
+      summary: Plan iptali (hekim, muhasebe) — gelecek seanslar ve açık taksitler iptal, fazla ödeme iade
+      parameters: [{ $ref: "#/components/parameters/PlanID" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { reason: { type: string } } } } } }
+      responses: { "200": { description: "paid_kurus, billed_kurus, refund_kurus, balance_after" } }
+  /api/patients/{patientID}/plans:
+    get:
+      tags: [Tedavi planı]
+      summary: Hastanın planları
+      parameters: [{ $ref: "#/components/parameters/PatientID" }]
+      responses: { "200": { description: Liste } }
+
+  /api/prices:
+    get:
+      tags: [Faturalama]
+      summary: Fiyat listesi (verilen tarihte geçerli, ya da history=true ile tümü)
+      parameters: [{ name: date, in: query, schema: { type: string, format: date } }, { name: history, in: query, schema: { type: boolean } }]
+      responses: { "200": { description: Liste } }
+    post:
+      tags: [Faturalama]
+      summary: Yeni fiyat dönemi (muhasebe) — açık dönemi kapatır
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [treatment_code, price_kurus, valid_from], properties: { treatment_code: { type: string }, price_kurus: { type: integer }, valid_from: { type: string, format: date } } } } } }
+      responses: { "201": { description: Oluşturuldu }, "409": { description: PRICE_OVERLAP } }
+  /api/payments:
+    post:
+      tags: [Faturalama]
+      summary: Ödeme (muhasebe) — açık taksitlere sırayla (önce peşinat) dağıtılır
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/PaymentRequest" } } } }
+      responses: { "201": { description: Ödeme }, "422": { description: "IDEMPOTENCY_KEY_REUSED, VALIDATION_ERROR" } }
+  /api/plans/{planID}/installments:
+    parameters: [{ $ref: "#/components/parameters/PlanID" }]
+    get: { tags: [Faturalama], summary: Taksitler, responses: { "200": { description: Liste } } }
+    post:
+      tags: [Faturalama]
+      summary: Peşinat + taksit planı (muhasebe); tutarlar kuruşu kuruşuna plan netine eşittir
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [count, first_due_date], properties: { down_payment_kurus: { type: integer }, count: { type: integer, minimum: 1, maximum: 36 }, first_due_date: { type: string, format: date } } } } } }
+      responses: { "201": { description: Taksitler }, "409": { description: "INSTALLMENTS_EXIST, PLAN_NOT_APPROVED" } }
+  /api/patients/{patientID}/account:
+    get:
+      tags: [Faturalama]
+      summary: Cari hesap özeti
+      parameters: [{ $ref: "#/components/parameters/PatientID" }]
+      responses: { "200": { description: Özet } }
+  /api/patients/{patientID}/ledger:
+    get:
+      tags: [Faturalama]
+      summary: Cari hesap hareketleri (append-only, keyset)
+      parameters: [{ $ref: "#/components/parameters/PatientID" }, { $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/Limit" }]
+      responses: { "200": { description: Sayfa } }
+  /api/billing/consistency:
+    get:
+      tags: [Faturalama]
+      summary: Defter tutarlılık denetimi (muhasebe)
+      responses: { "200": { description: "balance_mismatches, running_sum_mismatches, plan_billing_mismatches, ok" } }
+
+  /api/inventory/supplies:
+    get: { tags: [Stok], summary: Sarf malzemeleri (kullanılabilir / SKT geçmiş stok), responses: { "200": { description: Liste } } }
+    post:
+      tags: [Stok]
+      summary: Malzeme tanımı (asistan, muhasebe)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [sku, name, unit], properties: { sku: { type: string }, name: { type: string }, unit: { type: string, enum: [g, ml, adet] }, min_stock_milli: { type: integer } } } } } }
+      responses: { "201": { description: Oluşturuldu } }
+  /api/inventory/supplies/{supplyID}/lots:
+    parameters: [{ name: supplyID, in: path, required: true, schema: { type: integer } }]
+    get: { tags: [Stok], summary: Lotlar (FEFO sırası), responses: { "200": { description: Liste } } }
+    post:
+      tags: [Stok]
+      summary: Stok girişi
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [lot_no, expires_on, qty_milli], properties: { lot_no: { type: string }, expires_on: { type: string, format: date }, qty_milli: { type: integer } } } } } }
+      responses: { "201": { description: Lot } }
+  /api/inventory/recipes/{code}:
+    parameters: [{ name: code, in: path, required: true, schema: { type: string } }]
+    get: { tags: [Stok], summary: İşlem reçetesi, responses: { "200": { description: Reçete } } }
+    put:
+      tags: [Stok]
+      summary: Reçeteyi değiştir
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { type: object, properties: { supply_id: { type: integer }, qty_milli: { type: integer } } } } } } } } }
+      responses: { "200": { description: Reçete } }
+  /api/inventory/alerts:
+    get: { tags: [Stok], summary: Açık minimum stok uyarıları, responses: { "200": { description: Liste } } }
+  /api/inventory/movements:
+    get:
+      tags: [Stok]
+      summary: Stok hareketleri
+      parameters: [{ name: appointment_id, in: query, schema: { type: integer } }, { $ref: "#/components/parameters/Limit" }]
+      responses: { "200": { description: Liste } }
+
+  /api/reports/dashboard:
+    get: { tags: [Rapor], summary: Canlı panel (personel), responses: { "200": { description: Panel } } }
+  /api/reports/revenue:
+    get:
+      tags: [Rapor]
+      summary: Aylık faturalanan / tahsilat / iade (muhasebe)
+      parameters: [{ $ref: "#/components/parameters/From" }, { $ref: "#/components/parameters/To" }]
+      responses: { "200": { description: Rapor } }
+  /api/reports/dentists:
+    get:
+      tags: [Rapor]
+      summary: Hekim performansı
+      parameters: [{ $ref: "#/components/parameters/From" }, { $ref: "#/components/parameters/To" }]
+      responses: { "200": { description: Rapor } }
+  /api/reports/units:
+    get:
+      tags: [Rapor]
+      summary: Ünite doluluğu
+      parameters: [{ name: date, in: query, schema: { type: string, format: date } }]
+      responses: { "200": { description: Rapor } }
+  /api/reports/receivables:
+    get: { tags: [Rapor], summary: Alacaklar ve vadesi geçmiş taksitler (muhasebe), responses: { "200": { description: Rapor } } }
+  /api/reports/stock-usage:
+    get:
+      tags: [Rapor]
+      summary: Sarf malzeme kullanımı
+      parameters: [{ $ref: "#/components/parameters/From" }, { $ref: "#/components/parameters/To" }]
+      responses: { "200": { description: Rapor } }
+  /api/patients/{patientID}/notifications:
+    get:
+      tags: [Rapor]
+      summary: Simüle SMS bildirimleri
+      parameters: [{ $ref: "#/components/parameters/PatientID" }]
+      responses: { "200": { description: Liste } }
+  /api/notifications/reminders:
+    post:
+      tags: [Rapor]
+      summary: Yarınki randevular için hatırlatma SMS'i üret (resepsiyon)
+      responses: { "200": { description: "created" } }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    ID: { name: id, in: path, required: true, schema: { type: integer } }
+    PatientID: { name: patientID, in: path, required: true, schema: { type: integer } }
+    PlanID: { name: planID, in: path, required: true, schema: { type: integer } }
+    Tooth: { name: tooth, in: path, required: true, schema: { type: integer, description: "FDI: 11-48 kalıcı, 51-85 süt" } }
+    Cursor: { name: cursor, in: query, schema: { type: string } }
+    Limit: { name: limit, in: query, schema: { type: integer } }
+    From: { name: from, in: query, schema: { type: string, format: date } }
+    To: { name: to, in: query, schema: { type: string, format: date } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, schema: { type: string, maxLength: 200 } }
+  responses:
+    Unauthorized: { description: Kimlik doğrulama gerekli / hatalı, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Forbidden: { description: Rol yetkisiz, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Conflict: { description: Çakışma, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Validation: { description: Girdi doğrulaması, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties: { code: { type: string }, message: { type: string }, details: { type: object, additionalProperties: { type: string } } }
+    Health:
+      type: object
+      properties: { status: { type: string }, database: { type: string }, db_latency_ms: { type: integer }, time: { type: string, format: date-time } }
+    TokenPair:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer }
+        user: { type: object, properties: { user_id: { type: integer }, role: { type: string }, staff_id: { type: integer }, patient_id: { type: integer }, email: { type: string }, full_name: { type: string } } }
+    PatientCreate:
+      type: object
+      required: [national_id, first_name, last_name, birth_date, phone]
+      properties:
+        national_id: { type: string, description: "Geçerli TC kimlik no (11 hane, kontrol haneli)" }
+        first_name: { type: string }
+        last_name: { type: string }
+        birth_date: { type: string, format: date }
+        phone: { type: string }
+        email: { type: string, nullable: true }
+        institution_id: { type: integer, nullable: true }
+    Patient:
+      allOf:
+        - $ref: "#/components/schemas/PatientCreate"
+        - type: object
+          properties: { id: { type: integer }, institution: { type: string, nullable: true }, discount_bp: { type: integer }, balance_kurus: { type: integer } }
+    PatientPage:
+      type: object
+      properties: { items: { type: array, items: { $ref: "#/components/schemas/Patient" } }, next_cursor: { type: string } }
+    Slot:
+      type: object
+      properties: { dentist_id: { type: integer }, dentist_name: { type: string }, start: { type: string, format: date-time }, end: { type: string, format: date-time }, unit_id: { type: integer }, assistant_id: { type: integer } }
+    BookRequest:
+      type: object
+      required: [patient_id, dentist_id, start]
+      properties:
+        patient_id: { type: integer }
+        dentist_id: { type: integer }
+        treatment_code: { type: string, description: "plan_item_id verilmezse zorunlu" }
+        start: { type: string, format: date-time, description: "15 dk'lık dilim, Pzt-Cmt 09:00-18:00" }
+        unit_id: { type: integer }
+        assistant_id: { type: integer }
+        tooth: { type: integer }
+        plan_item_id: { type: integer }
+    Appointment:
+      type: object
+      properties:
+        id: { type: integer }
+        patient_id: { type: integer }
+        dentist_id: { type: integer }
+        assistant_id: { type: integer }
+        unit_id: { type: integer }
+        treatment_code: { type: string }
+        tooth: { type: integer, nullable: true }
+        plan_item_id: { type: integer, nullable: true }
+        session_no: { type: integer, nullable: true }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        status: { type: string, enum: [booked, completed, cancelled, no_show] }
+    ToothState: { type: string, enum: [healthy, filled, root_canal, crowned, extracted, implant] }
+    PlanRequest:
+      type: object
+      required: [items]
+      properties:
+        patient_id: { type: integer }
+        note: { type: string }
+        items:
+          type: array
+          items: { type: object, required: [treatment_code], properties: { treatment_code: { type: string }, tooth: { type: integer }, depends_on: { type: integer, description: "Aynı istekteki kalemin 1 tabanlı sırası" } } }
+    Plan:
+      type: object
+      properties:
+        id: { type: integer }
+        status: { type: string, enum: [draft, approved, in_progress, completed, cancelled] }
+        current_version: { type: integer }
+        versions: { type: array, items: { type: object, properties: { version: { type: integer }, price_date: { type: string }, discount_bp: { type: integer }, gross_kurus: { type: integer }, discount_kurus: { type: integer }, net_kurus: { type: integer }, approved_at: { type: string, nullable: true }, approval_method: { type: string, nullable: true } } } }
+        items: { type: array, items: { type: object, properties: { id: { type: integer }, seq: { type: integer }, tooth: { type: integer, nullable: true }, treatment_code: { type: string }, depends_on: { type: integer, nullable: true }, sessions_total: { type: integer }, sessions_done: { type: integer }, net_kurus: { type: integer }, billed_kurus: { type: integer }, status: { type: string } } } }
+    PaymentRequest:
+      type: object
+      required: [patient_id, amount_kurus, method]
+      properties: { patient_id: { type: integer }, plan_id: { type: integer }, amount_kurus: { type: integer }, method: { type: string, enum: [cash, card, transfer] } }

@@ -532,7 +532,7 @@ func (s *suite) t4(ctx context.Context) error {
 	var sup struct {
 		ID int64 `json:"id"`
 	}
-	if err := s.post(ctx, s.assistant, "/api/inventory/supplies", map[string]any{"sku": tag, "name": "Doğrulama kompoziti",
+	if err := s.post(ctx, s.assistant, "/api/inventory/supplies", map[string]any{"sku": tag, "name": "Doğrulama kompoziti (make verify)",
 		"unit": "g", "min_stock_milli": 2000}, http.StatusCreated, &sup); err != nil {
 		return err
 	}
@@ -680,6 +680,19 @@ func (s *suite) t4(ctx context.Context) error {
 	}
 	if kinds["consume"] != -1000 || kinds["return"] != 1000 {
 		return fail("stok hareketleri: %v", kinds)
+	}
+	// (e) Receiving stock above the minimum resolves the alert (and leaves no open alert behind).
+	if err := s.post(ctx, s.assistant, fmt.Sprintf("/api/inventory/supplies/%d/lots", sup.ID), map[string]any{"lot_no": "TOPUP",
+		"expires_on": now.AddDate(1, 0, 0).Format(time.DateOnly), "qty_milli": 5000}, http.StatusCreated, nil); err != nil {
+		return err
+	}
+	if err := s.get(ctx, s.assistant, "/api/inventory/alerts", &alerts); err != nil {
+		return err
+	}
+	for _, a := range alerts.Items {
+		if a.SupplyID == sup.ID {
+			return fail("stok girişi sonrası uyarı kapanmadı")
+		}
 	}
 	return s.consistency(ctx)
 }

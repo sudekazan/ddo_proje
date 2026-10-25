@@ -189,6 +189,7 @@ func (s *Service) units(w http.ResponseWriter, r *http.Request) error {
 		       round(COALESCE(sum(EXTRACT(EPOCH FROM upper(a.during) - lower(a.during)) / 60), 0) / 540.0, 3)::float8
 		FROM "tn-units" u LEFT JOIN "tn-appointments" a ON a.unit_id = u.id AND a.status IN ('booked','completed')
 		     AND a.during && tstzrange($1, $2)
+		WHERE u.active
 		GROUP BY u.id ORDER BY u.id`, start, start.AddDate(0, 0, 1))
 	if err != nil {
 		return err

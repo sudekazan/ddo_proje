@@ -91,7 +91,8 @@ tr.strike td { text-decoration: line-through; }
 .row-actions { display: flex; gap: .25rem; flex-wrap: wrap; }
 .item-row { border-bottom: 1px dashed var(--line); padding-bottom: .5rem; }
 
-.chart { width: 100%; height: auto; max-width: 720px; }
+.chart-wrap { overflow-x: auto; }
+.chart { width: 100%; min-width: 560px; height: auto; max-width: 720px; display: block; }
 .chart .midline { stroke: var(--line); stroke-dasharray: 4 4; }
 .tooth { cursor: pointer; }
 .tooth rect { stroke: var(--muted); stroke-width: 1.2; }

@@ -16,7 +16,6 @@ export function PatientDetail({ id: fixedId }: { id?: number }) {
   const id = fixedId ?? Number(params.id);
   const user = useUser()!;
   const patient = useApi<Patient>(`/api/patients/${id}`);
-  const [tab, setTab] = useState<Tab>("chart");
   const canFinance = ["accounting", "reception", "patient"].includes(user.role);
   const tabs: [Tab, string, boolean][] = [
     ["chart", "Diş haritası", user.role !== "accounting"],
@@ -25,6 +24,9 @@ export function PatientDetail({ id: fixedId }: { id?: number }) {
     ["account", "Cari hesap", canFinance],
     ["sms", "SMS bildirimleri", user.role === "patient" || user.role === "reception"],
   ];
+  const visible = tabs.filter((t) => t[2]);
+  const [selected, setTab] = useState<Tab>(visible[0][0]);
+  const tab = visible.some((t) => t[0] === selected) ? selected : visible[0][0];
   return (
     <Async state={patient}>
       {(p) => (
@@ -37,7 +39,7 @@ export function PatientDetail({ id: fixedId }: { id?: number }) {
             </div>
           </Card>
           <nav className="tabs" role="tablist">
-            {tabs.filter((t) => t[2]).map(([k, label]) => (
+            {visible.map(([k, label]) => (
               <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{label}</button>
             ))}
           </nav>

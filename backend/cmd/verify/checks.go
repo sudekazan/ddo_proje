@@ -239,7 +239,7 @@ func (s *suite) f2(ctx context.Context) error {
 		ID     int64 `json:"id"`
 		Active bool  `json:"active"`
 	}
-	if err := s.post(ctx, s.reception, "/api/units", map[string]string{"name": "Doğrulama Ünitesi " + idemKey("u")}, http.StatusCreated, &u); err != nil {
+	if err := s.post(ctx, s.reception, "/api/units", map[string]string{"name": fmt.Sprintf("Doğrulama Ünitesi %d", time.Now().UnixNano()%1_000_000)}, http.StatusCreated, &u); err != nil {
 		return err
 	}
 	resp, err = s.reception.Do(ctx, http.MethodPatch, fmt.Sprintf("/api/units/%d", u.ID), map[string]bool{"active": false})

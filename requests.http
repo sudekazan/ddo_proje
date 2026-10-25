@@ -1,0 +1,416 @@
+# DişHekimim — VS Code REST Client koleksiyonu
+# Önce "Giriş" bölümündeki 5 isteği çalıştırın; sonraki istekler token'ları oradan alır.
+# Tarihleri (@day) ileri bir iş günüyle değiştirin.
+
+@api = http://localhost:8080
+@day = 2026-12-07
+@pass = Demo123!
+
+### ---------- Sistem ----------
+GET {{api}}/health
+
+###
+GET {{api}}/_hz/6736
+
+### ---------- Giriş ----------
+# @name reception
+POST {{api}}/api/auth/login
+Content-Type: application/json
+
+{"email": "resepsiyon@dishekimim.local", "password": "{{pass}}"}
+
+###
+# @name dentist
+POST {{api}}/api/auth/login
+Content-Type: application/json
+
+{"email": "hekim@dishekimim.local", "password": "{{pass}}"}
+
+###
+# @name assistant
+POST {{api}}/api/auth/login
+Content-Type: application/json
+
+{"email": "asistan@dishekimim.local", "password": "{{pass}}"}
+
+###
+# @name accounting
+POST {{api}}/api/auth/login
+Content-Type: application/json
+
+{"email": "muhasebe@dishekimim.local", "password": "{{pass}}"}
+
+###
+# @name patient
+POST {{api}}/api/auth/login
+Content-Type: application/json
+
+{"email": "hasta@dishekimim.local", "password": "{{pass}}"}
+
+###
+@rec = {{reception.response.body.access_token}}
+@dt = {{dentist.response.body.access_token}}
+@as = {{assistant.response.body.access_token}}
+@acc = {{accounting.response.body.access_token}}
+@pt = {{patient.response.body.access_token}}
+
+### Yanlış parola → 401
+POST {{api}}/api/auth/login
+Content-Type: application/json
+
+{"email": "resepsiyon@dishekimim.local", "password": "yanlis"}
+
+### Refresh token rotasyonu (tekrar çalıştırınca 401)
+POST {{api}}/api/auth/refresh
+Content-Type: application/json
+
+{"refresh_token": "{{accounting.response.body.refresh_token}}"}
+
+###
+GET {{api}}/api/me
+Authorization: Bearer {{dt}}
+
+### ---------- Yetki ihlalleri (hepsi 403) ----------
+GET {{api}}/api/patients
+Authorization: Bearer {{pt}}
+
+###
+GET {{api}}/api/patients/2/ledger
+Authorization: Bearer {{pt}}
+
+###
+POST {{api}}/api/payments
+Authorization: Bearer {{as}}
+Content-Type: application/json
+
+{"patient_id": 2, "amount_kurus": 100, "method": "cash"}
+
+### ---------- F-1 Hasta ----------
+GET {{api}}/api/patients?q=yıl&limit=5
+Authorization: Bearer {{rec}}
+
+###
+# @name newPatient
+POST {{api}}/api/patients
+Authorization: Bearer {{rec}}
+Content-Type: application/json
+
+{"national_id": "10000000146", "first_name": "Deneme", "last_name": "Hasta", "birth_date": "1992-03-04", "phone": "05551112233", "institution_id": 1}
+
+### Geçersiz TC → 422
+POST {{api}}/api/patients
+Authorization: Bearer {{rec}}
+Content-Type: application/json
+
+{"national_id": "12345678901", "first_name": "A", "last_name": "B", "birth_date": "1990-01-01", "phone": "05551112233"}
+
+###
+@pid = {{newPatient.response.body.id}}
+
+GET {{api}}/api/patients/{{pid}}
+Authorization: Bearer {{rec}}
+
+###
+PATCH {{api}}/api/patients/{{pid}}
+Authorization: Bearer {{rec}}
+Content-Type: application/json
+
+{"phone": "05559998877"}
+
+### ---------- Kaynaklar ----------
+GET {{api}}/api/treatment-types
+Authorization: Bearer {{rec}}
+
+###
+GET {{api}}/api/staff?kind=dentist
+Authorization: Bearer {{rec}}
+
+###
+GET {{api}}/api/units
+Authorization: Bearer {{rec}}
+
+###
+POST {{api}}/api/units
+Authorization: Bearer {{rec}}
+Content-Type: application/json
+
+{"name": "Ünite 7"}
+
+###
+GET {{api}}/api/institutions
+Authorization: Bearer {{rec}}
+
+###
+POST {{api}}/api/staff/6/leaves
+Authorization: Bearer {{rec}}
+Content-Type: application/json
+
+{"start": "{{day}}T00:00:00+03:00", "end": "{{day}}T23:59:00+03:00", "reason": "Kongre"}
+
+###
+GET {{api}}/api/staff/6/leaves
+Authorization: Bearer {{rec}}
+
+### ---------- F-2 / T-1 Randevu ----------
+GET {{api}}/api/availability?date={{day}}&treatment_code=EXAM&dentist_id=1
+Authorization: Bearer {{rec}}
+
+###
+# @name appt
+POST {{api}}/api/appointments
+Authorization: Bearer {{rec}}
+Content-Type: application/json
+Idempotency-Key: demo-appt-1
+
+{"patient_id": {{pid}}, "dentist_id": 1, "treatment_code": "FILLING", "tooth": 16, "start": "{{day}}T10:00:00+03:00"}
+
+### Aynı slot başka hasta → 409 DENTIST_BUSY
+POST {{api}}/api/appointments
+Authorization: Bearer {{rec}}
+Content-Type: application/json
+
+{"patient_id": 3, "dentist_id": 1, "treatment_code": "EXAM", "start": "{{day}}T10:15:00+03:00"}
+
+###
+@aid = {{appt.response.body.id}}
+
+GET {{api}}/api/appointments?date={{day}}&dentist_id=1
+Authorization: Bearer {{rec}}
+
+###
+GET {{api}}/api/appointments/{{aid}}
+Authorization: Bearer {{rec}}
+
+### Bekleme listesi
+POST {{api}}/api/waitlist
+Authorization: Bearer {{rec}}
+Content-Type: application/json
+
+{"patient_id": 4, "treatment_code": "EXAM", "dentist_id": 1, "from": "{{day}}T09:00:00+03:00", "to": "{{day}}T18:00:00+03:00"}
+
+###
+GET {{api}}/api/waitlist?status=waiting
+Authorization: Bearer {{rec}}
+
+### ---------- F-3 / T-4 Tamamlama, diş haritası, stok ----------
+POST {{api}}/api/appointments/{{aid}}/complete
+Authorization: Bearer {{as}}
+Content-Type: application/json
+
+{"note": "Kompozit A2"}
+
+###
+GET {{api}}/api/patients/{{pid}}/teeth
+Authorization: Bearer {{dt}}
+
+###
+GET {{api}}/api/patients/{{pid}}/teeth/16/events
+Authorization: Bearer {{dt}}
+
+###
+GET {{api}}/api/inventory/movements?appointment_id={{aid}}
+Authorization: Bearer {{as}}
+
+### Yanlış tamamlamayı geri al (stok aynı lotlara iade)
+POST {{api}}/api/appointments/{{aid}}/revert
+Authorization: Bearer {{dt}}
+Content-Type: application/json
+
+{"reason": "Yanlış hastaya işlendi"}
+
+### İptal (bekleme listesi devreye girer)
+POST {{api}}/api/appointments/{{aid}}/cancel
+Authorization: Bearer {{rec}}
+Content-Type: application/json
+
+{"reason": "Hasta erteledi"}
+
+### Çekilmiş diş bulgusu
+POST {{api}}/api/patients/{{pid}}/teeth/26/observations
+Authorization: Bearer {{dt}}
+Content-Type: application/json
+
+{"state": "extracted", "note": "İlk muayenede eksik"}
+
+### ---------- F-4 / T-2 Tedavi planı ----------
+# @name plan
+POST {{api}}/api/plans
+Authorization: Bearer {{dt}}
+Content-Type: application/json
+
+{"patient_id": {{pid}}, "note": "Kanal + kuron", "items": [{"treatment_code": "CROWN", "tooth": 36}, {"treatment_code": "ROOT_CANAL", "tooth": 36}, {"treatment_code": "CLEANING"}]}
+
+### Çekilmiş dişe dolgu → 422 INVALID_TOOTH_PROCEDURE
+POST {{api}}/api/plans
+Authorization: Bearer {{dt}}
+Content-Type: application/json
+
+{"patient_id": {{pid}}, "items": [{"treatment_code": "FILLING", "tooth": 26}]}
+
+### Döngü → 422 DEPENDENCY_CYCLE
+POST {{api}}/api/plans
+Authorization: Bearer {{dt}}
+Content-Type: application/json
+
+{"patient_id": {{pid}}, "items": [{"treatment_code": "CLEANING", "depends_on": 2}, {"treatment_code": "EXAM", "depends_on": 1}]}
+
+###
+@planId = {{plan.response.body.id}}
+
+POST {{api}}/api/plans/{{planId}}/revisions
+Authorization: Bearer {{dt}}
+Content-Type: application/json
+
+{"note": "Temizlik çıkarıldı", "items": [{"treatment_code": "ROOT_CANAL", "tooth": 36}, {"treatment_code": "CROWN", "tooth": 36}]}
+
+### Eski sürüm onayı → 409 PLAN_VERSION_MISMATCH
+POST {{api}}/api/plans/{{planId}}/approve
+Authorization: Bearer {{rec}}
+Content-Type: application/json
+
+{"version": 1}
+
+###
+POST {{api}}/api/plans/{{planId}}/approve
+Authorization: Bearer {{rec}}
+Content-Type: application/json
+
+{"version": 2}
+
+###
+# @name planGet
+GET {{api}}/api/plans/{{planId}}
+Authorization: Bearer {{dt}}
+
+### Kanal seansı (plan_item_id: GET yanıtındaki items[0].id)
+POST {{api}}/api/appointments
+Authorization: Bearer {{rec}}
+Content-Type: application/json
+
+{"patient_id": {{pid}}, "dentist_id": 1, "plan_item_id": {{planGet.response.body.items[0].id}}, "start": "{{day}}T14:00:00+03:00"}
+
+###
+GET {{api}}/api/patients/{{pid}}/plans
+Authorization: Bearer {{rec}}
+
+### Hasta kendi planını görür
+GET {{api}}/api/patients/1/plans
+Authorization: Bearer {{pt}}
+
+### ---------- F-5 / T-3 Fiyat, ödeme, taksit, iade ----------
+GET {{api}}/api/prices
+Authorization: Bearer {{acc}}
+
+###
+GET {{api}}/api/prices?history=true
+Authorization: Bearer {{acc}}
+
+###
+POST {{api}}/api/prices
+Authorization: Bearer {{acc}}
+Content-Type: application/json
+
+{"treatment_code": "EXAM", "price_kurus": 99900, "valid_from": "2028-01-01"}
+
+###
+POST {{api}}/api/plans/{{planId}}/installments
+Authorization: Bearer {{acc}}
+Content-Type: application/json
+
+{"down_payment_kurus": 100000, "count": 3, "first_due_date": "{{day}}"}
+
+###
+GET {{api}}/api/plans/{{planId}}/installments
+Authorization: Bearer {{acc}}
+
+### İdempotent ödeme (iki kez çalıştırın: aynı yanıt + Idempotent-Replayed: true)
+POST {{api}}/api/payments
+Authorization: Bearer {{acc}}
+Content-Type: application/json
+Idempotency-Key: demo-payment-1
+
+{"patient_id": {{pid}}, "plan_id": {{planId}}, "amount_kurus": 150000, "method": "card"}
+
+###
+GET {{api}}/api/patients/{{pid}}/account
+Authorization: Bearer {{acc}}
+
+###
+GET {{api}}/api/patients/{{pid}}/ledger?limit=20
+Authorization: Bearer {{acc}}
+
+### Plan iptali + iade
+POST {{api}}/api/plans/{{planId}}/cancel
+Authorization: Bearer {{acc}}
+Content-Type: application/json
+
+{"reason": "Hasta vazgeçti"}
+
+###
+GET {{api}}/api/billing/consistency
+Authorization: Bearer {{acc}}
+
+### ---------- F-6 Stok ----------
+GET {{api}}/api/inventory/supplies
+Authorization: Bearer {{as}}
+
+###
+GET {{api}}/api/inventory/supplies/1/lots
+Authorization: Bearer {{as}}
+
+###
+POST {{api}}/api/inventory/supplies/1/lots
+Authorization: Bearer {{as}}
+Content-Type: application/json
+
+{"lot_no": "KMP-2027-07", "expires_on": "2027-07-31", "qty_milli": 250000}
+
+###
+POST {{api}}/api/inventory/supplies
+Authorization: Bearer {{as}}
+Content-Type: application/json
+
+{"sku": "FLR-VRN", "name": "Florür vernik", "unit": "ml", "min_stock_milli": 10000}
+
+###
+GET {{api}}/api/inventory/recipes/FILLING
+Authorization: Bearer {{as}}
+
+###
+GET {{api}}/api/inventory/alerts
+Authorization: Bearer {{as}}
+
+### ---------- F-7 Raporlar ----------
+GET {{api}}/api/reports/dashboard
+Authorization: Bearer {{rec}}
+
+###
+GET {{api}}/api/reports/revenue?from=2026-01-01
+Authorization: Bearer {{acc}}
+
+###
+GET {{api}}/api/reports/dentists
+Authorization: Bearer {{acc}}
+
+###
+GET {{api}}/api/reports/units?date={{day}}
+Authorization: Bearer {{rec}}
+
+###
+GET {{api}}/api/reports/receivables
+Authorization: Bearer {{acc}}
+
+###
+GET {{api}}/api/reports/stock-usage
+Authorization: Bearer {{as}}
+
+### Simüle SMS
+POST {{api}}/api/notifications/reminders
+Authorization: Bearer {{rec}}
+Content-Type: application/json
+
+{}
+
+###
+GET {{api}}/api/patients/1/notifications
+Authorization: Bearer {{pt}}
